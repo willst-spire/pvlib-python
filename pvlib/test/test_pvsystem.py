@@ -6,6 +6,7 @@ from collections import OrderedDict
 import numpy as np
 from numpy import nan, array
 import pandas as pd
+import xarray as xr
 
 import pytest
 from pandas.util.testing import assert_series_equal, assert_frame_equal
@@ -537,6 +538,22 @@ def test_sapm_celltemp_dict_like():
     assert_frame_equal(default, pvsystem.sapm_celltemp(900, 5, 20, model))
 
 
+@needs_numpy_1_10
+def test_sapm_celltemp_xarray():
+    times = pd.DatetimeIndex(start='2015-01-01', end='2015-01-02', freq='12H', name="time")
+    temps = xr.DataArray([0, 10, 5], dims=["time"],coords={"time":times})
+    irrads = xr.DataArray([0, 500, 0], dims=["time"],coords={"time":times})
+    winds = xr.DataArray([10, 5, 0], dims=["time"],coords={"time":times})
+
+    pvtemps = pvsystem.sapm_celltemp(irrads, winds, temps)
+
+    expected = pd.DataFrame({'temp_cell':[0., 23.06066166, 5.],
+                             'temp_module':[0., 21.56066166, 5.]},
+                            index=times)
+
+    assert_frame_equal(expected, pvtemps.to_dataframe()[['temp_cell','temp_module']])
+
+
 def test_sapm_celltemp_with_index():
     times = pd.DatetimeIndex(start='2015-01-01', end='2015-01-02', freq='12H')
     temps = pd.Series([0, 10, 5], index=times)
@@ -613,6 +630,16 @@ def test_snlinverter(sam_data):
     pacs = pvsystem.snlinverter(vdcs, pdcs, inverters[testinv])
     assert_series_equal(pacs, pd.Series([-0.020000, 132.004308, 250.000000]))
 
+def test_snlinverter_xarray(sam_data):
+    inverters = sam_data['cecinverter']
+    testinv = 'ABB__MICRO_0_25_I_OUTD_US_208_208V__CEC_2014_'
+    vdcs = xr.DataArray(np.linspace(0,50,3), dims=["t"])
+    idcs = xr.DataArray(np.linspace(0,11,3), dims=["t"])
+    pdcs = idcs * vdcs
+
+    pacs = pvsystem.snlinverter(vdcs, pdcs, inverters[testinv])
+    assert isinstance(pacs,xr.DataArray)
+    assert_series_equal(pd.Series(pacs), pd.Series([-0.020000, 132.004308, 250.000000]))
 
 def test_PVSystem_snlinverter(sam_data):
     inverters = sam_data['cecinverter']

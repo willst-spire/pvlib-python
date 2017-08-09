@@ -11,6 +11,7 @@ import calendar
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from pvlib import tools, atmosphere, solarposition, irradiance
 
@@ -110,32 +111,32 @@ def ineichen(apparent_zenith, airmass_absolute, linke_turbidity,
 
     # use max so that nighttime values will result in 0s instead of
     # negatives. propagates nans.
-    cos_zenith = np.maximum(tools.cosd(apparent_zenith), 0)
+    cos_zenith = xr.ufuncs.maximum(tools.cosd(apparent_zenith), 0)
 
     tl = linke_turbidity
 
-    fh1 = np.exp(-altitude/8000.)
-    fh2 = np.exp(-altitude/1250.)
+    fh1 = xr.ufuncs.exp(-altitude/8000.)
+    fh2 = xr.ufuncs.exp(-altitude/1250.)
     cg1 = 5.09e-05 * altitude + 0.868
     cg2 = 3.92e-05 * altitude + 0.0387
 
-    ghi = (np.exp(-cg2*airmass_absolute*(fh1 + fh2*(tl - 1))) *
-           np.exp(0.01*airmass_absolute**1.8))
+    ghi = (xr.ufuncs.exp(-cg2*airmass_absolute*(fh1 + fh2*(tl - 1))) *
+           xr.ufuncs.exp(0.01*airmass_absolute**1.8))
     # use fmax to map airmass nans to 0s. multiply and divide by tl to
     # reinsert tl nans
-    ghi = cg1 * dni_extra * cos_zenith * tl / tl * np.fmax(ghi, 0)
+    ghi = cg1 * dni_extra * cos_zenith * tl / tl * xr.ufuncs.fmax(ghi, 0)
 
     # BncI = "normal beam clear sky radiation"
     b = 0.664 + 0.163/fh1
-    bnci = b * np.exp(-0.09 * airmass_absolute * (tl - 1))
-    bnci = dni_extra * np.fmax(bnci, 0)
+    bnci = b * xr.ufuncs.exp(-0.09 * airmass_absolute * (tl - 1))
+    bnci = dni_extra * xr.ufuncs.fmax(bnci, 0)
 
     # "empirical correction" SE 73, 157 & SE 73, 312.
-    bnci_2 = ((1 - (0.1 - 0.2*np.exp(-tl))/(0.1 + 0.882/fh1)) /
+    bnci_2 = ((1 - (0.1 - 0.2*xr.ufuncs.exp(-tl))/(0.1 + 0.882/fh1)) /
               cos_zenith)
-    bnci_2 = ghi * np.fmin(np.fmax(bnci_2, 0), 1e20)
+    bnci_2 = ghi * xr.ufuncs.fmin(xr.ufuncs.fmax(bnci_2, 0), 1e20)
 
-    dni = np.minimum(bnci, bnci_2)
+    dni = xr.ufuncs.minimum(bnci, bnci_2)
 
     dhi = ghi - dni*cos_zenith
 
@@ -146,6 +147,8 @@ def ineichen(apparent_zenith, airmass_absolute, linke_turbidity,
 
     if isinstance(dni, pd.Series):
         irrads = pd.DataFrame.from_dict(irrads)
+    elif isinstance(dni, xr.DataArray):
+        irrads = xr.Dataset(irrads)
 
     return irrads
 
@@ -158,11 +161,11 @@ def lookup_linke_turbidity(time, latitude, longitude, filepath=None,
 
     Parameters
     ----------
-    time : pandas.DatetimeIndex
+    time : pandas.DatetimeIndex or xarray.DataArray
 
-    latitude : float
+    latitude : float or xarray.DataArray
 
-    longitude : float
+    longitude : float or xarray.DataArray
 
     filepath : None or string, default None
         The path to the ``.mat`` file.
@@ -199,6 +202,30 @@ def lookup_linke_turbidity(time, latitude, longitude, filepath=None,
         raise ImportError('The Linke turbidity lookup table requires scipy. ' +
                           'You can still use clearsky.ineichen if you ' +
                           'supply your own turbidities.')
+
+    if isinstance(time, xr.DataArray):
+        time = time.coords.to_index() if time.coords else pd.DatetimeIndex(time.values, name=time.dims[0])
+
+    # Recursive call to lookup_linke_turbidity if latitude and longitude are xarrays
+    if isinstance(latitude, xr.DataArray) and isinstance(longitude, xr.DataArray):
+
+        try:
+            if max(latitude.ndim, longitude.ndim) != 1:
+                raise ValueError("Latitude or Longitude have multiple dimensions.")
+            xr.testing.assert_equal(latitude.coords.to_dataset(), longitude.coords.to_dataset())
+            spatial_dim = latitude.coords.to_index()
+        except AssertionError as ae:
+            raise ValueError("Latitude and Longitude do not have equal coordinates in.")
+
+        time_dim = time.name if time.name else "index"
+        def lookup_turbidity_single(lat, lon):
+            single_tb_da = xr.DataArray.from_series(
+                lookup_linke_turbidity(time, lat.values.item(), lon.values.item(), filepath, interp_turbidity))
+            single_tb_da[time_dim] = np.array(time, dtype=np.datetime64)
+            return single_tb_da
+
+        turbidity = xr.concat([lookup_turbidity_single(lat, lon) for lat, lon in zip(latitude, longitude)], dim=spatial_dim)
+        return turbidity
 
     if filepath is None:
         pvlib_path = os.path.dirname(os.path.abspath(__file__))

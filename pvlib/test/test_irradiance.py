@@ -3,6 +3,7 @@ from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 import pytest
 from numpy.testing import assert_almost_equal, assert_allclose
@@ -25,8 +26,10 @@ times = pd.date_range(start='20140624', freq='6H', periods=4, tz=tus.tz)
 
 ephem_data = solarposition.get_solarposition(
     times, tus.latitude, tus.longitude, method='nrel_numpy')
+ephem_data_xr = xr.Dataset(ephem_data)
 
 irrad_data = tus.get_clearsky(times, model='ineichen', linke_turbidity=3)
+irrad_data_xr = xr.Dataset(irrad_data)
 
 dni_et = irradiance.extraradiation(times.dayofyear)
 
@@ -112,6 +115,13 @@ def test_isotropic_series():
     assert_allclose(result, [0, 35.728402, 104.601328, 54.777191], atol=1e-4)
 
 
+@needs_numpy_1_10
+def test_isotropic_xarray():
+    result = irradiance.isotropic(40, irrad_data_xr['dhi'])
+    assert_allclose(result, [0, 35.728402, 104.601328, 54.777191], atol=1e-4)
+    assert isinstance(result,xr.DataArray)
+
+
 def test_klucher_series_float():
     result = irradiance.klucher(40, 180, 100, 900, 20, 180)
     assert_allclose(result, 88.3022221559)
@@ -130,6 +140,16 @@ def test_haydavies():
                          ephem_data['apparent_zenith'],
                          ephem_data['azimuth'])
     assert_allclose(result, [0, 14.967008, 102.994862, 33.190865], atol=1e-4)
+
+
+@needs_numpy_1_10
+def test_haydavies_xarray():
+    result = irradiance.haydavies(40, 180, irrad_data_xr['dhi'], irrad_data_xr['dni'],
+                         dni_et,
+                         ephem_data_xr['apparent_zenith'],
+                         ephem_data_xr['azimuth'])
+    assert_allclose(result, [0, 14.967008, 102.994862, 33.190865], atol=1e-4)
+    assert isinstance(result,xr.DataArray)
 
 
 def test_reindl():
@@ -225,6 +245,27 @@ def test_total_irrad():
         assert total.columns.tolist() == ['poa_global', 'poa_direct',
                                           'poa_diffuse', 'poa_sky_diffuse',
                                           'poa_ground_diffuse']
+
+
+def test_total_irrad_xarray():
+    models = ['isotropic', 'klutcher', 'klucher',
+              'haydavies', 'reindl', 'king', 'perez']
+    AM = atmosphere.relativeairmass(ephem_data_xr['apparent_zenith'])
+
+    for model in models:
+        total = irradiance.total_irrad(
+            32, 180,
+            ephem_data_xr['apparent_zenith'], ephem_data_xr['azimuth'],
+            dni=irrad_data_xr['dni'], ghi=irrad_data_xr['ghi'],
+            dhi=irrad_data_xr['dhi'],
+            dni_extra=dni_et, airmass=AM,
+            model=model,
+            surface_type='urban')
+
+        assert sorted(total.data_vars.keys()) == ['poa_diffuse', 'poa_direct',
+                                                  'poa_global', 'poa_ground_diffuse',
+                                                  'poa_sky_diffuse']
+        assert isinstance(total,xr.Dataset)
 
 
 @pytest.mark.parametrize('model', ['isotropic', 'klucher',

@@ -7,6 +7,7 @@ from __future__ import division
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 from warnings import warn
 
 APPARENT_ZENITH_MODELS = ('simple', 'kasten1966', 'kastenyoung1989',
@@ -206,37 +207,40 @@ def relativeairmass(zenith, model='kastenyoung1989'):
     # need to filter first because python 2.7 does not support raising a
     # negative number to a negative power.
     z = np.where(zenith > 90, np.nan, zenith)
-    zenith_rad = np.radians(z)
+    zenith_rad = xr.ufuncs.deg2rad(z)
 
     model = model.lower()
 
     if 'kastenyoung1989' == model:
-        am = (1.0 / (np.cos(zenith_rad) +
+        am = (1.0 / (xr.ufuncs.cos(zenith_rad) +
               0.50572*(((6.07995 + (90 - z)) ** - 1.6364))))
     elif 'kasten1966' == model:
-        am = 1.0 / (np.cos(zenith_rad) + 0.15*((93.885 - z) ** - 1.253))
+        am = 1.0 / (xr.ufuncs.cos(zenith_rad) + 0.15*((93.885 - z) ** - 1.253))
     elif 'simple' == model:
-        am = 1.0 / np.cos(zenith_rad)
+        am = 1.0 / xr.ufuncs.cos(zenith_rad)
     elif 'pickering2002' == model:
-        am = (1.0 / (np.sin(np.radians(90 - z +
+        am = (1.0 / (xr.ufuncs.sin(xr.ufuncs.deg2rad(90 - z +
               244.0 / (165 + 47.0 * (90 - z) ** 1.1)))))
     elif 'youngirvine1967' == model:
-        am = ((1.0 / np.cos(zenith_rad)) *
-              (1 - 0.0012*((1.0 / np.cos(zenith_rad)) ** 2) - 1))
+        am = ((1.0 / xr.ufuncs.cos(zenith_rad)) *
+              (1 - 0.0012*((1.0 / xr.ufuncs.cos(zenith_rad)) ** 2) - 1))
     elif 'young1994' == model:
-        am = ((1.002432*((np.cos(zenith_rad)) ** 2) +
-              0.148386*(np.cos(zenith_rad)) + 0.0096467) /
-              (np.cos(zenith_rad) ** 3 +
-              0.149864*(np.cos(zenith_rad) ** 2) +
-              0.0102963*(np.cos(zenith_rad)) + 0.000303978))
+        am = ((1.002432*((xr.ufuncs.cos(zenith_rad)) ** 2) +
+              0.148386*(xr.ufuncs.cos(zenith_rad)) + 0.0096467) /
+              (xr.ufuncs.cos(zenith_rad) ** 3 +
+              0.149864*(xr.ufuncs.cos(zenith_rad) ** 2) +
+              0.0102963*(xr.ufuncs.cos(zenith_rad)) + 0.000303978))
     elif 'gueymard1993' == model:
-        am = (1.0 / (np.cos(zenith_rad) +
+        am = (1.0 / (xr.ufuncs.cos(zenith_rad) +
               0.00176759*(z)*((94.37515 - z) ** - 1.21563)))
     else:
         raise ValueError('%s is not a valid model for relativeairmass', model)
 
     if isinstance(zenith, pd.Series):
         am = pd.Series(am, index=zenith.index)
+    elif isinstance(zenith, xr.DataArray):
+        #TODO: fix assignment workaround using ones_matrix and multiplication
+        am = xr.ones_like(zenith) * am
 
     return am
 

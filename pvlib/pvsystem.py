@@ -15,6 +15,7 @@ except ImportError:
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from pvlib import tools
 from pvlib.tools import _build_kwargs
@@ -1314,14 +1315,14 @@ def sapm(effective_irradiance, temp_cell, module):
         module['Impo'] * (module['C0']*Ee + module['C1']*(Ee**2)) *
         (1 + module['Aimp']*(temp_cell - T0)))
 
-    out['v_oc'] = np.maximum(0, (
-        module['Voco'] + module['Cells_in_Series']*delta*np.log(Ee) +
+    out['v_oc'] = xr.ufuncs.maximum(0, (
+        module['Voco'] + module['Cells_in_Series']*delta*xr.ufuncs.log(Ee) +
         Bvoco*(temp_cell - T0)))
 
-    out['v_mp'] = np.maximum(0, (
+    out['v_mp'] = xr.ufuncs.maximum(0, (
         module['Vmpo'] +
-        module['C2']*module['Cells_in_Series']*delta*np.log(Ee) +
-        module['C3']*module['Cells_in_Series']*((delta*np.log(Ee)) ** 2) +
+        module['C2']*module['Cells_in_Series']*delta*xr.ufuncs.log(Ee) +
+        module['C3']*module['Cells_in_Series']*((delta*xr.ufuncs.log(Ee)) ** 2) +
         Bvmpo*(temp_cell - T0)))
 
     out['p_mp'] = out['i_mp'] * out['v_mp']
@@ -1335,7 +1336,9 @@ def sapm(effective_irradiance, temp_cell, module):
         module['IXXO'] * (module['C6']*Ee + module['C7']*(Ee**2)) *
         (1 + module['Aisc']*(temp_cell - T0)))
 
-    if isinstance(out['i_sc'], pd.Series):
+    if isinstance(out['i_sc'], xr.DataArray):
+        out = xr.Dataset(out)
+    elif isinstance(out['i_sc'], pd.Series):
         out = pd.DataFrame(out)
 
     return out
@@ -1427,12 +1430,14 @@ def sapm_celltemp(poa_global, wind_speed, temp_air,
 
     E0 = 1000.  # Reference irradiance
 
-    temp_module = pd.Series(poa_global*np.exp(a + b*wind_speed) + temp_air)
+    temp_module = poa_global*xr.ufuncs.exp(a + b*wind_speed) + temp_air
 
     temp_cell = temp_module + (poa_global / E0)*(deltaT)
 
-    return pd.DataFrame({'temp_cell': temp_cell, 'temp_module': temp_module})
-
+    if isinstance(temp_module, xr.DataArray):
+        return xr.Dataset({'temp_cell': temp_cell, 'temp_module': temp_module})
+    else:
+        return pd.DataFrame({'temp_cell': pd.Series(temp_cell), 'temp_module': pd.Series(temp_module)})
 
 def sapm_spectral_loss(airmass_absolute, module):
     """
@@ -2062,9 +2067,11 @@ def snlinverter(v_dc, p_dc, inverter):
     B = Pso * (1 + C2*(v_dc - Vdco))
     C = C0 * (1 + C3*(v_dc - Vdco))
 
-    ac_power = (Paco/(A-B) - C*(A-B)) * (p_dc-B) + C*((p_dc-B)**2)
-    ac_power = np.minimum(Paco, ac_power)
-    ac_power = np.where(p_dc < Pso, -1.0 * abs(Pnt), ac_power)
+    ac_power = (Paco/(A-B) - C*(A-B)) * (p_dc-B) + C*xr.ufuncs.square(p_dc-B)
+    ac_power = xr.ufuncs.minimum(Paco, ac_power)
+
+    pso_mask = p_dc < Pso
+    ac_power = -1.0*xr.ufuncs.fabs(Pnt)*pso_mask + ac_power*~pso_mask
 
     if isinstance(p_dc, pd.Series):
         ac_power = pd.Series(ac_power, index=p_dc.index)
@@ -2361,6 +2368,6 @@ def pvwatts_ac(pdc, pdc0, eta_inv_nom=0.96, eta_inv_ref=0.9637):
     eta = eta_inv_nom / eta_inv_ref * (-0.0162*zeta - 0.0059/zeta + 0.9858)
 
     pac = eta * pdc
-    pac = np.minimum(pac0, pac)
+    pac = xr.ufuncs.minimum(pac0, pac)
 
     return pac

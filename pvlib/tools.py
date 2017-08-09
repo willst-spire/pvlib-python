@@ -6,6 +6,7 @@ import datetime as dt
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 import pytz
 
 
@@ -24,7 +25,7 @@ def cosd(angle):
         Cosine of the angle
     """
 
-    res = np.cos(np.radians(angle))
+    res = xr.ufuncs.cos(xr.ufuncs.deg2rad(angle))
     return res
 
 
@@ -43,7 +44,7 @@ def sind(angle):
         Sin of the angle
     """
 
-    res = np.sin(np.radians(angle))
+    res = xr.ufuncs.sin(xr.ufuncs.deg2rad(angle))
     return res
 
 
@@ -62,7 +63,7 @@ def tand(angle):
         Tan of the angle
     """
 
-    res = np.tan(np.radians(angle))
+    res = xr.ufuncs.tan(xr.ufuncs.deg2rad(angle))
     return res
 
 
@@ -81,7 +82,7 @@ def asind(number):
         arcsin result
     """
 
-    res = np.degrees(np.arcsin(number))
+    res = xr.ufuncs.rad2deg(xr.ufuncs.arcsin(number))
     return res
 
 
@@ -201,7 +202,7 @@ def _doy_to_datetimeindex(doy, epoch_year=2014):
 
 
 def _datetimelike_scalar_to_doy(time):
-    return pd.DatetimeIndex([pd.Timestamp(time)]).dayofyear
+    return pd.Timestamp(time).timetuple().tm_yday
 
 
 def _datetimelike_scalar_to_datetimeindex(time):
@@ -221,6 +222,8 @@ def _scalar_out(input):
 
 def _array_out(input):
     if isinstance(input, pd.Series):
+        output = input.values
+    elif isinstance(input, xr.DataArray):
         output = input.values
     else:
         output = input

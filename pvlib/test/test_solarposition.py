@@ -3,6 +3,7 @@ import datetime
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from pandas.util.testing import (assert_frame_equal, assert_series_equal,
                                  assert_index_equal)
@@ -352,6 +353,38 @@ def test_get_solarposition_no_kwargs(expected_solpos):
     expected_solpos = np.round(expected_solpos, 2)
     ephem_data = np.round(ephem_data, 2)
     assert_frame_equal(expected_solpos, ephem_data[expected_solpos.columns])
+
+
+def test_get_solarposition_xarray(expected_solpos):
+    lats = xr.DataArray(np.ones(1),dims=["x"]) * golden.latitude
+    lons = xr.DataArray(np.ones(1),dims=["x"]) * golden.longitude
+
+    times = np.array(pd.date_range(datetime.datetime(2003,10,17,13,30,30),
+                          periods=1, freq='D', tz=golden.tz),dtype=np.datetime64)
+    times = xr.DataArray(times,dims=["index"])
+
+    expected_solpos.index = pd.DatetimeIndex(times.values, name="index")
+    expected_solpos = np.round(expected_solpos, 2)
+
+    ephem_data = solarposition.get_solarposition(times, lats,lons)
+    ephem_data = np.round(ephem_data, 2).squeeze("x").drop("x").to_dataframe()
+    assert_frame_equal(expected_solpos,ephem_data[expected_solpos.columns])
+
+    times = xr.DataArray(times.values,dims=["index"],coords={"index":times.values})
+    ephem_data = solarposition.get_solarposition(times, lats,lons)
+    ephem_data = np.round(ephem_data, 2).squeeze("x").drop("x").to_dataframe()
+    assert_frame_equal(expected_solpos,ephem_data[expected_solpos.columns])
+
+    times = pd.DatetimeIndex(times.values,name="index")
+    ephem_data = solarposition.get_solarposition(times, lats,lons)
+    ephem_data = np.round(ephem_data, 2).squeeze("x").drop("x").to_dataframe()
+    assert_frame_equal(expected_solpos,ephem_data[expected_solpos.columns])
+
+    times = pd.DatetimeIndex(times.values)
+    ephem_data = solarposition.get_solarposition(times, lats,lons)
+    ephem_data = np.round(ephem_data, 2).squeeze("x").drop("x").to_dataframe()
+    assert_frame_equal(expected_solpos,ephem_data[expected_solpos.columns])
+
 
 
 def test_nrel_earthsun_distance():

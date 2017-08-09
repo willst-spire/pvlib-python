@@ -10,6 +10,8 @@ from functools import partial
 import logging
 import warnings
 import pandas as pd
+import xarray as xr
+import numpy as np
 
 from pvlib import (solarposition, pvsystem, clearsky, atmosphere, tools)
 from pvlib.tracking import SingleAxisTracker
@@ -33,14 +35,14 @@ def basic_chain(times, latitude, longitude,
 
     Parameters
     ----------
-    times : DatetimeIndex
+    times : DatetimeIndex or or xarray.DataArray
         Times at which to evaluate the model.
 
-    latitude : float.
+    latitude : float or xarray.DataArray.
         Positive is north of the equator.
         Use decimal degrees notation.
 
-    longitude : float.
+    longitude : float or xarray.DataArray.
         Positive is east of the prime meridian.
         Use decimal degrees notation.
 
@@ -129,22 +131,30 @@ def basic_chain(times, latitude, longitude,
                                                      longitude,
                                                      altitude=altitude,
                                                      pressure=pressure,
+                                                     method=solar_position_method,
                                                      **kwargs)
 
     # possible error with using apparent zenith with some models
     airmass = atmosphere.relativeairmass(solar_position['apparent_zenith'],
                                          model=airmass_model)
     airmass = atmosphere.absoluteairmass(airmass, pressure)
-    dni_extra = pvlib.irradiance.extraradiation(solar_position.index)
-    dni_extra = pd.Series(dni_extra, index=solar_position.index)
 
     aoi = pvlib.irradiance.aoi(surface_tilt, surface_azimuth,
                                solar_position['apparent_zenith'],
                                solar_position['azimuth'])
 
+    if isinstance(solar_position,xr.Dataset):
+        solar_position_index = times.astype("datetime64[ns]")
+        doy_index = np.vectorize(tools._datetimelike_scalar_to_doy)(solar_position_index)
+        dni_extra = pvlib.irradiance.extraradiation(doy_index)
+    else:
+        solar_position_index = solar_position.index
+        dni_extra = pvlib.irradiance.extraradiation(solar_position_index)
+        dni_extra = pd.Series(dni_extra, index=solar_position_index)
+
     if irradiance is None:
         linke_turbidity = clearsky.lookup_linke_turbidity(
-            solar_position.index, latitude, longitude)
+            solar_position_index, latitude, longitude)
         irradiance = clearsky.ineichen(
             solar_position['apparent_zenith'],
             airmass,

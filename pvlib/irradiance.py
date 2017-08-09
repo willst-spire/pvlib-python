@@ -14,6 +14,7 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from pvlib import tools
 from pvlib import solarposition
@@ -43,7 +44,7 @@ def extraradiation(datetime_or_doy, solar_constant=1366.1, method='spencer',
 
     Parameters
     ----------
-    datetime_or_doy : numeric, array, date, datetime, Timestamp, DatetimeIndex
+    datetime_or_doy : numeric, array, date, datetime, Timestamp, DatetimeIndex, xarray.DataArray
         Day of year, array of days of year, or datetime-like object
 
     solar_constant : float, default 1366.1
@@ -120,11 +121,11 @@ def extraradiation(datetime_or_doy, solar_constant=1366.1, method='spencer',
     method = method.lower()
     if method == 'asce':
         B = solarposition._calculate_simple_day_angle(to_doy(datetime_or_doy))
-        RoverR0sqrd = 1 + 0.033 * np.cos(B)
+        RoverR0sqrd = 1 + 0.033 * xr.ufuncs.cos(B)
     elif method == 'spencer':
         B = solarposition._calculate_simple_day_angle(to_doy(datetime_or_doy))
-        RoverR0sqrd = (1.00011 + 0.034221 * np.cos(B) + 0.00128 * np.sin(B) +
-                       0.000719 * np.cos(2 * B) + 7.7e-05 * np.sin(2 * B))
+        RoverR0sqrd = (1.00011 + 0.034221 * xr.ufuncs.cos(B) + 0.00128 * xr.ufuncs.sin(B) +
+                       0.000719 * xr.ufuncs.cos(2 * B) + 7.7e-05 * xr.ufuncs.sin(2 * B))
     elif method == 'pyephem':
         times = to_datetimeindex(datetime_or_doy)
         RoverR0sqrd = solarposition.pyephem_earthsun_distance(times) ** (-2)
@@ -205,7 +206,7 @@ def aoi(surface_tilt, surface_azimuth, solar_zenith, solar_azimuth):
 
     projection = aoi_projection(surface_tilt, surface_azimuth,
                                 solar_zenith, solar_azimuth)
-    aoi_value = np.rad2deg(np.arccos(projection))
+    aoi_value = xr.ufuncs.rad2deg(xr.ufuncs.arccos(projection))
 
     try:
         aoi_value.name = 'aoi'
@@ -282,7 +283,7 @@ def beam_component(surface_tilt, surface_azimuth, solar_zenith, solar_azimuth,
     """
     beam = dni * aoi_projection(surface_tilt, surface_azimuth,
                                 solar_zenith, solar_azimuth)
-    beam = np.maximum(beam, 0)
+    beam = xr.ufuncs.maximum(beam, 0)
 
     return beam
 
@@ -381,6 +382,8 @@ def total_irrad(surface_tilt, surface_azimuth,
 
     if isinstance(total, pd.Series):
         all_irrad = pd.DataFrame(all_irrad)
+    elif isinstance(total, xr.DataArray):
+        all_irrad = xr.Dataset(all_irrad)
 
     return all_irrad
 
@@ -426,7 +429,7 @@ def globalinplane(aoi, dni, poa_sky_diffuse, poa_ground_diffuse):
     :math:`< 0^{\circ}` is set to zero.
     '''
 
-    poa_direct = np.maximum(dni * np.cos(np.radians(aoi)), 0)
+    poa_direct = xr.ufuncs.maximum(dni * tools.cosd(aoi), 0)
     poa_global = poa_direct + poa_sky_diffuse + poa_ground_diffuse
     poa_diffuse = poa_sky_diffuse + poa_ground_diffuse
 
@@ -498,7 +501,7 @@ def grounddiffuse(surface_tilt, ghi, albedo=.25, surface_type=None):
         pvl_logger.info('surface_type=%s mapped to albedo=%s',
                         surface_type, albedo)
 
-    diffuse_irrad = ghi * albedo * (1 - np.cos(np.radians(surface_tilt))) * 0.5
+    diffuse_irrad = ghi * albedo * (1 - tools.cosd(surface_tilt)) * 0.5
 
     try:
         diffuse_irrad.name = 'diffuse_ground'
@@ -630,7 +633,7 @@ def klucher(surface_tilt, surface_azimuth, dhi, ghi, solar_zenith,
     F = 1 - ((dhi / ghi) ** 2)
     try:
         # fails with single point input
-        F.fillna(0, inplace=True)
+        F = F.fillna(0)
     except AttributeError:
         F = 0
 
@@ -731,7 +734,7 @@ def haydavies(surface_tilt, surface_azimuth, dhi, dni, dni_extra,
     term2 = 0.5 * (1 + tools.cosd(surface_tilt))
 
     sky_diffuse = dhi * (AI * Rb + term1 * term2)
-    sky_diffuse = np.maximum(sky_diffuse, 0)
+    sky_diffuse = xr.ufuncs.maximum(sky_diffuse, 0)
 
     return sky_diffuse
 
@@ -827,15 +830,15 @@ def reindl(surface_tilt, surface_azimuth, dhi, dni, ghi, dni_extra,
 
     # DNI projected onto horizontal
     HB = dni * cos_solar_zenith
-    HB = np.maximum(HB, 0)
+    HB = xr.ufuncs.maximum(HB, 0)
 
     # these are the () and [] sub-terms of the second term of eqn 8
     term1 = 1 - AI
     term2 = 0.5 * (1 + tools.cosd(surface_tilt))
-    term3 = 1 + np.sqrt(HB / ghi) * (tools.sind(0.5 * surface_tilt) ** 3)
+    term3 = 1 + xr.ufuncs.sqrt(HB / ghi) * (tools.sind(0.5 * surface_tilt) ** 3)
 
     sky_diffuse = dhi * (AI * Rb + term1 * term2 * term3)
-    sky_diffuse = np.maximum(sky_diffuse, 0)
+    sky_diffuse = xr.ufuncs.maximum(sky_diffuse, 0)
 
     return sky_diffuse
 
@@ -879,7 +882,7 @@ def king(surface_tilt, dhi, ghi, solar_zenith):
     sky_diffuse = (dhi * ((1 + tools.cosd(surface_tilt))) / 2 + ghi *
                    ((0.012 * solar_zenith - 0.04)) *
                    ((1 - tools.cosd(surface_tilt))) / 2)
-    sky_diffuse = np.maximum(sky_diffuse, 0)
+    sky_diffuse = xr.ufuncs.maximum(sky_diffuse, 0)
 
     return sky_diffuse
 
@@ -982,7 +985,7 @@ def perez(surface_tilt, surface_azimuth, dhi, dni, dni_extra,
     '''
 
     kappa = 1.041  # for solar_zenith in radians
-    z = np.radians(solar_zenith)  # convert to radians
+    z = xr.ufuncs.deg2rad(solar_zenith)  # convert to radians
 
     # delta is the sky's "brightness"
     delta = dhi * airmass / dni_extra
@@ -1022,27 +1025,29 @@ def perez(surface_tilt, surface_azimuth, dhi, dni, dni_extra,
     F2c = np.vstack((F2c, nans))
 
     F1 = (F1c[ebin, 0] + F1c[ebin, 1] * delta + F1c[ebin, 2] * z)
-    F1 = np.maximum(F1, 0)
+    F1 = xr.ufuncs.maximum(F1, 0)
 
     F2 = (F2c[ebin, 0] + F2c[ebin, 1] * delta + F2c[ebin, 2] * z)
-    F2 = np.maximum(F2, 0)
+    F2 = xr.ufuncs.maximum(F2, 0)
 
     A = aoi_projection(surface_tilt, surface_azimuth,
                        solar_zenith, solar_azimuth)
-    A = np.maximum(A, 0)
+    A = xr.ufuncs.maximum(A, 0)
 
     B = tools.cosd(solar_zenith)
-    B = np.maximum(B, tools.cosd(85))
+    B = xr.ufuncs.maximum(B, tools.cosd(85))
 
     # Calculate Diffuse POA from sky dome
     term1 = 0.5 * (1 - F1) * (1 + tools.cosd(surface_tilt))
     term2 = F1 * A / B
     term3 = F2 * tools.sind(surface_tilt)
 
-    sky_diffuse = np.maximum(dhi * (term1 + term2 + term3), 0)
+    sky_diffuse = xr.ufuncs.maximum(dhi * (term1 + term2 + term3), 0)
 
     # we've preserved the input type until now, so don't ruin it!
     if isinstance(sky_diffuse, pd.Series):
+        sky_diffuse[np.isnan(airmass)] = 0
+    elif isinstance(sky_diffuse, xr.DataArray):
         sky_diffuse[np.isnan(airmass)] = 0
     else:
         sky_diffuse = np.where(np.isnan(airmass), 0, sky_diffuse)
@@ -1059,6 +1064,9 @@ def perez(surface_tilt, surface_azimuth, dhi, dni, dni_extra,
         mask = sky_diffuse == 0
         if isinstance(sky_diffuse, pd.Series):
             diffuse_components = pd.DataFrame(diffuse_components)
+            diffuse_components.loc[mask] = 0
+        elif isinstance(sky_diffuse, xr.DataArray):
+            diffuse_components = xr.Dataset(diffuse_components)
             diffuse_components.loc[mask] = 0
         else:
             diffuse_components = {k: np.where(mask, 0, v) for k, v in
@@ -1127,13 +1135,13 @@ def disc(ghi, zenith, datetime_or_doy, pressure=101325):
 
     # this is the I0 calculation from the reference
     I0 = extraradiation(datetime_or_doy, 1370, 'spencer')
-    I0h = I0 * np.cos(np.radians(zenith))
+    I0h = I0 * tools.cosd(zenith)
 
     am = atmosphere.relativeairmass(zenith, model='kasten1966')
     am = atmosphere.absoluteairmass(am, pressure)
 
     kt = ghi / I0h
-    kt = np.maximum(kt, 0)
+    kt = xr.ufuncs.maximum(kt, 0)
     # powers of kt will be used repeatedly, so compute only once
     kt2 = kt * kt  # about the same as kt ** 2
     kt3 = kt2 * kt  # 5-10x faster than kt ** 3
@@ -1149,7 +1157,7 @@ def disc(ghi, zenith, datetime_or_doy, pressure=101325):
                  -0.28 + 0.932*kt - 2.048*kt2,
                  -47.01 + 184.2*kt - 222.0*kt2 + 73.81*kt3)
 
-    delta_kn = a + b * np.exp(c*am)
+    delta_kn = a + b * xr.ufuncs.exp(c*am)
 
     Knc = 0.866 - 0.122*am + 0.0121*am**2 - 0.000653*am**3 + 1.4e-05*am**4
     Kn = Knc - delta_kn
@@ -1242,8 +1250,8 @@ def dirint(ghi, zenith, times, pressure=101325., use_delta_kt_prime=True,
     kt = disc_out['kt']
     am = disc_out['airmass']
 
-    kt_prime = kt / (1.031 * np.exp(-1.4 / (0.9 + 9.4 / am)) + 0.1)
-    kt_prime = np.minimum(kt_prime, 0.82)  # From SRRL code
+    kt_prime = kt / (1.031 * xr.ufuncs.exp(-1.4 / (0.9 + 9.4 / am)) + 0.1)
+    kt_prime = xr.ufuncs.minimum(kt_prime, 0.82)  # From SRRL code
 
     # wholmgren:
     # the use_delta_kt_prime statement is a port of the MATLAB code.
@@ -1258,7 +1266,7 @@ def dirint(ghi, zenith, times, pressure=101325., use_delta_kt_prime=True,
         delta_kt_prime = pd.Series(-1, index=times)
 
     if temp_dew is not None:
-        w = pd.Series(np.exp(0.07 * temp_dew - 0.075), index=times)
+        w = pd.Series(xr.ufuncs.exp(0.07 * temp_dew - 0.075), index=times)
     else:
         w = pd.Series(-1, index=times)
 
@@ -1460,7 +1468,7 @@ def erbs(ghi, zenith, doy):
     i0_h = dni_extra * tools.cosd(zenith)
 
     kt = ghi / i0_h
-    kt = np.maximum(kt, 0)
+    kt = xr.ufuncs.maximum(kt, 0)
 
     # For Kt <= 0.22, set the diffuse fraction
     df = 1 - 0.09*kt
@@ -1534,8 +1542,8 @@ def liujordan(zenith, transmittance, airmass, pressure=101325.,
     tao = transmittance
 
     dni = dni_extra*tao**airmass
-    dhi = 0.3 * (1.0 - tao**airmass) * dni_extra * np.cos(np.radians(zenith))
-    ghi = dhi + dni * np.cos(np.radians(zenith))
+    dhi = 0.3 * (1.0 - tao**airmass) * dni_extra * tools.cosd(zenith)
+    ghi = dhi + dni * tools.cosd(zenith)
 
     irrads = OrderedDict()
     irrads['ghi'] = ghi

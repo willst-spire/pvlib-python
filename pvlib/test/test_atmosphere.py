@@ -2,6 +2,7 @@ import itertools
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 import pytest
 from numpy.testing import assert_allclose
@@ -14,6 +15,7 @@ latitude, longitude, tz, altitude = 32.2, -111, 'US/Arizona', 700
 times = pd.date_range(start='20140626', end='20140626', freq='6h', tz=tz)
 
 ephem_data = solarposition.get_solarposition(times, latitude, longitude)
+ephem_data_xr = solarposition.get_solarposition(times, xr.DataArray([latitude] * 2,dims=["x"]), xr.DataArray([longitude] * 2,dims=["x"]))
 
 
 # need to add physical tests instead of just functional tests
@@ -33,6 +35,16 @@ def test_airmass(model):
     out = atmosphere.relativeairmass(ephem_data['zenith'], model)
     assert isinstance(out, pd.Series)
     out = atmosphere.relativeairmass(ephem_data['zenith'].values, model)
+    assert isinstance(out, np.ndarray)
+
+
+@pytest.mark.parametrize("model",
+    ['simple', 'kasten1966', 'youngirvine1967', 'kastenyoung1989',
+     'gueymard1993', 'young1994', 'pickering2002'])
+def test_airmass_xarray(model):
+    out = atmosphere.relativeairmass(ephem_data_xr['zenith'], model)
+    assert isinstance(out, xr.DataArray)
+    out = atmosphere.relativeairmass(ephem_data_xr['zenith'].values, model)
     assert isinstance(out, np.ndarray)
 
 

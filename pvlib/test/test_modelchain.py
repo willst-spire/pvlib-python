@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import xarray as xr
 from numpy import nan
 
 from pvlib import modelchain, pvsystem
@@ -357,6 +358,32 @@ def test_basic_chain_alt_az(sam_data):
 
     expected = pd.Series(np.array([  115.40352679,  -2.00000000e-02]),
                          index=times)
+    assert_series_equal(ac, expected, check_less_precise=2)
+
+
+@requires_scipy
+def test_basic_chain_xarray(sam_data):
+    times = pd.DatetimeIndex(start='20160101 1200-0700',
+                             end='20160101 1800-0700', freq='6H',name="time").tz_convert(None)
+    time_array = xr.DataArray(times, dims=["time"]).astype('datetime64[ns]')
+    latitude = xr.DataArray([32.2],dims=["x"])
+    longitude = xr.DataArray([-111],dims=["x"])
+    altitude = 700
+    surface_tilt = 0
+    surface_azimuth = 0
+    modules = sam_data['sandiamod']
+    module_parameters = modules['Canadian_Solar_CS5P_220M___2009_']
+    inverters = sam_data['cecinverter']
+    inverter_parameters = inverters['ABB__MICRO_0_25_I_OUTD_US_208_208V__CEC_2014_']
+
+    dc, ac = modelchain.basic_chain(time_array, latitude, longitude,
+                                    module_parameters, inverter_parameters,
+                                    surface_tilt=surface_tilt,
+                                    surface_azimuth=surface_azimuth)
+
+    expected = pd.Series(np.array([  115.40352679,  -2.00000000e-02]),
+                         index=times)
+    ac = ac.squeeze("x").drop("x").to_series()
     assert_series_equal(ac, expected, check_less_precise=2)
 
 

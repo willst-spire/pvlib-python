@@ -20,6 +20,7 @@ except ImportError:
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from pvlib import atmosphere
 from pvlib.tools import datetime_to_djd, djd_to_datetime
@@ -39,9 +40,9 @@ def get_solarposition(time, latitude, longitude,
     ----------
     time : pandas.DatetimeIndex
 
-    latitude : float
+    latitude : float or xarray.DataArray
 
-    longitude : float
+    longitude : float or xarray.DataArray
 
     altitude : None or float, default None
         If None, computed from pressure. Assumed to be 0 m
@@ -80,6 +81,31 @@ def get_solarposition(time, latitude, longitude,
 
     [3] NREL SPA code: http://rredc.nrel.gov/solar/codesandalgorithms/spa/
     """
+
+    if isinstance(time, xr.DataArray):
+        time = time.coords.to_index() if time.coords else pd.DatetimeIndex(time.values, name=time.dims[0])
+
+    # Recursive call to get_solarposition if latitude and longitude are xarrays
+    if isinstance(latitude, xr.DataArray) and isinstance(longitude, xr.DataArray):
+
+        try:
+            if max(latitude.ndim, longitude.ndim) != 1:
+                raise ValueError("Latitude or Longitude have multiple dimensions.")
+            xr.testing.assert_equal(latitude.coords.to_dataset(), longitude.coords.to_dataset())
+            spatial_dim = latitude.coords.to_index()
+        except AssertionError as ae:
+            raise ValueError("Latitude and Longitude do not have equal coordinates in.")
+
+        time_dim = time.name if time.name else "index"
+        def get_solar_position_single(lat, lon):
+            single_sp_da = xr.Dataset.from_dataframe(
+                get_solarposition(time, lat.values.item(), lon.values.item(), altitude, pressure, method,
+                                                temperature, **kwargs)).to_array(dim="columns")
+            single_sp_da[time_dim] = np.array(time, dtype=np.datetime64)
+            return single_sp_da
+
+        solar_positions = xr.concat([get_solar_position_single(lat, lon) for lat, lon in zip(latitude, longitude)], dim=spatial_dim)
+        return solar_positions.to_dataset(dim="columns")
 
     if altitude is None and pressure is None:
         altitude = 0.
