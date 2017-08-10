@@ -2,6 +2,7 @@ from __future__ import division
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from pvlib.tools import cosd, sind
 from pvlib.pvsystem import PVSystem
@@ -252,10 +253,10 @@ def singleaxis(apparent_zenith, apparent_azimuth,
 
     Parameters
     ----------
-    apparent_zenith : Series
+    apparent_zenith : Series or xarray.DataArray
         Solar apparent zenith angles in decimal degrees.
 
-    apparent_azimuth : Series
+    apparent_azimuth : Series or xarray.DataArray
         Solar apparent azimuth angles in decimal degrees.
 
     axis_tilt : float, default 0
@@ -313,8 +314,9 @@ def singleaxis(apparent_zenith, apparent_azimuth,
                      'backtrack=%s, gcr=%.3f',
                      axis_tilt, axis_azimuth, max_angle, backtrack, gcr)
 
-    pvl_logger.debug('\napparent_zenith=\n%s\napparent_azimuth=\n%s',
-                     apparent_zenith.head(), apparent_azimuth.head())
+    if isinstance(apparent_zenith,pd.Series) and isinstance(apparent_azimuth,pd.Series):
+        pvl_logger.debug('\napparent_zenith=\n%s\napparent_azimuth=\n%s',
+                         apparent_zenith.head(), apparent_azimuth.head())
 
     # MATLAB to Python conversion by
     # Will Holmgren (@wholmgren), U. Arizona. March, 2015.
@@ -335,14 +337,19 @@ def singleaxis(apparent_zenith, apparent_azimuth,
     # Rotate sun azimuth to coordinate system as in [1]
     # to calculate sun position.
 
-    try:
-        pd.util.testing.assert_index_equal(apparent_azimuth.index,
-                                           apparent_zenith.index)
-    except AssertionError:
-        raise ValueError('apparent_azimuth.index and '
-                         'apparent_zenith.index must match.')
+    if isinstance(apparent_azimuth,pd.Series) or isinstance(apparent_zenith,pd.Series):
+        times = apparent_azimuth.index
+        index_name = times.name if times.name else "index"
+        apparent_azimuth = xr.DataArray.from_series(apparent_azimuth).rename({index_name:"time"})
+        apparent_zenith = xr.DataArray.from_series(apparent_zenith).rename({index_name:"time"})
+    else:
+        times = None
 
-    times = apparent_azimuth.index
+    try:
+        xr.testing.assert_equal(apparent_azimuth["time"], apparent_zenith["time"])
+    except AssertionError:
+        raise ValueError('apparent_azimuth time coord and '
+                         'apparent_zenith time coord must match.')
 
     az = apparent_azimuth - 180
     apparent_elevation = 90 - apparent_zenith
@@ -410,48 +417,47 @@ def singleaxis(apparent_zenith, apparent_azimuth,
 
     # Calculate angle from x-y plane to projection of sun vector onto x-z plane
     # and then obtain wid by translating tmp to convention for rotation angles.
-    wid = pd.Series(90 - np.degrees(np.arctan2(zp, xp)), index=times)
+    wid = 90 - xr.ufuncs.rad2deg(xr.ufuncs.arctan2(zp, xp))
 
     # filter for sun above panel horizon
-    wid[zp <= 0] = np.nan
+    wid = wid * (1 / ~(zp <= 0))
 
     # Account for backtracking; modified from [1] to account for rotation
     # angle convention being used here.
     if backtrack:
         pvl_logger.debug('applying backtracking')
         axes_distance = 1/gcr
-        temp = np.minimum(axes_distance*cosd(wid), 1)
+        temp = xr.ufuncs.minimum(axes_distance*cosd(wid), 1)
 
         # backtrack angle
         # (always positive b/c acosd returns values between 0 and 180)
-        wc = np.degrees(np.arccos(temp))
+        wc = xr.ufuncs.rad2deg(xr.ufuncs.arccos(temp))
 
         v = wid < 0
-        widc = pd.Series(index=times)
-        widc[~v] = wid[~v] - wc[~v]  # Eq 4 applied when wid in QI
-        widc[v] = wid[v] + wc[v]     # Eq 4 applied when wid in QIV
+        # widc[~v] = wid[~v] - wc[~v]  # Eq 4 applied when wid in QI
+        # widc[v] = wid[v] + wc[v]     # Eq 4 applied when wid in QIV
+        widc = wid + (wc * v - wc * ~v)
     else:
         pvl_logger.debug('no backtracking')
         widc = wid
 
     tracker_theta = widc.copy()
-    tracker_theta[tracker_theta > max_angle] = max_angle
-    tracker_theta[tracker_theta < -max_angle] = -max_angle
+    tracker_theta = xr.ufuncs.minimum(max_angle,tracker_theta)
+    tracker_theta = xr.ufuncs.maximum(-max_angle, tracker_theta)
 
     # calculate panel normal vector in panel-oriented x, y, z coordinates.
     # y-axis is axis of tracker rotation.  tracker_theta is a compass angle
     # (clockwise is positive) rather than a trigonometric angle.
     # the *0 is a trick to preserve NaN values.
-    panel_norm = np.array([sind(tracker_theta),
+    panel_norm = xr.concat([sind(tracker_theta),
                            tracker_theta*0,
-                           cosd(tracker_theta)])
+                           cosd(tracker_theta)], dim="xyz")
 
     # sun position in vector format in panel-oriented x, y, z coordinates
-    sun_vec = np.array([xp, yp, zp])
+    sun_vec = xr.concat([xp, yp, zp], dim="xyz")
 
     # calculate angle-of-incidence on panel
-    aoi = np.degrees(np.arccos(np.abs(np.sum(sun_vec*panel_norm, axis=0))))
-    aoi = pd.Series(aoi, index=times)
+    aoi = xr.ufuncs.rad2deg(xr.ufuncs.arccos(xr.ufuncs.fabs((panel_norm*sun_vec).sum(dim="xyz"))))
 
     # calculate panel tilt and azimuth
     # in a coordinate system where the panel tilt is the
@@ -466,35 +472,31 @@ def singleaxis(apparent_zenith, apparent_azimuth,
     # also parallel to earth surface, then project.
 
     # Calculate standard rotation matrix
-    rot_x = np.array([[1, 0, 0],
+    rot_x = xr.DataArray(np.array([[1, 0, 0],
                       [0, cosd(-axis_tilt), -sind(-axis_tilt)],
-                      [0, sind(-axis_tilt), cosd(-axis_tilt)]])
+                      [0, sind(-axis_tilt), cosd(-axis_tilt)]]), dims=["xyz_prime","xyz"])
     pvl_logger.debug('rot_x=\n%s', rot_x)
 
     # panel_norm_earth contains the normal vector
     # expressed in earth-surface coordinates
     # (z normal to surface, y aligned with tracker axis parallel to earth)
-    panel_norm_earth = np.dot(rot_x, panel_norm).T
+    panel_norm_earth = rot_x.dot(panel_norm).rename({"xyz_prime":"xyz"})
     pvl_logger.debug('panel_norm_earth=%s', panel_norm_earth)
 
     # projection to plane tangent to earth surface,
     # in earth surface coordinates
-    projected_normal = np.array([panel_norm_earth[:, 0],
-                                 panel_norm_earth[:, 1],
-                                 panel_norm_earth[:, 2]*0]).T
+    projected_normal = panel_norm_earth * xr.DataArray([1, 1, 0], dims=["xyz"])
     pvl_logger.debug('projected_normal=%s', projected_normal)
 
     # calculate vector magnitudes
-    panel_norm_earth_mag = np.sqrt(np.nansum(panel_norm_earth**2, axis=1))
-    projected_normal_mag = np.sqrt(np.nansum(projected_normal**2, axis=1))
+    panel_norm_earth_mag = xr.ufuncs.sqrt((panel_norm_earth**2).sum(dim="xyz",skipna=True))
+    projected_normal_mag = xr.ufuncs.sqrt((projected_normal**2).sum(dim="xyz",skipna=True))
     pvl_logger.debug('panel_norm_earth_mag=%s, projected_normal_mag=%s',
                      panel_norm_earth_mag, projected_normal_mag)
 
     # renormalize the projected vector
     # avoid creating nan values.
-    non_zeros = projected_normal_mag != 0
-    projected_normal[non_zeros] = (projected_normal[non_zeros].T /
-                                   projected_normal_mag[non_zeros]).T
+    projected_normal = (projected_normal / projected_normal_mag).fillna(projected_normal)
     pvl_logger.debug('renormalized projected_normal=%s',
                      projected_normal)
 
@@ -503,9 +505,7 @@ def singleaxis(apparent_zenith, apparent_azimuth,
 #     surface_azimuth = pd.Series(
 #         np.degrees(np.arctan(projected_normal[:,1]/projected_normal[:,0])),
 #                                 index=times)
-    surface_azimuth = pd.Series(
-        np.degrees(np.arctan2(projected_normal[:, 1], projected_normal[:, 0])),
-        index=times)
+    surface_azimuth = xr.ufuncs.rad2deg(xr.ufuncs.arctan2(projected_normal.isel(xyz=1), projected_normal.isel(xyz=0)))
 
     # 2. Clean up atan when x-coord or y-coord is zero
 #     surface_azimuth[(projected_normal[:,0]==0) & (projected_normal[:,1]>0)] =  90
@@ -553,21 +553,28 @@ def singleaxis(apparent_zenith, apparent_azimuth,
     surface_azimuth = 90 - surface_azimuth + axis_azimuth
 
     # 5. Map azimuth into [0,360) domain.
-    surface_azimuth[surface_azimuth < 0] += 360
-    surface_azimuth[surface_azimuth >= 360] -= 360
+    sa_too_low = surface_azimuth < 0
+    sa_too_high = surface_azimuth >= 360
+    surface_azimuth = (surface_azimuth + 360)*sa_too_low + (surface_azimuth - 360)*sa_too_high + surface_azimuth*(~sa_too_low*~sa_too_high)
 
     # Calculate surface_tilt
     # Use pandas to calculate the sum because it handles nan values better.
-    surface_tilt = (90 - np.degrees(np.arccos(
-                            pd.DataFrame(panel_norm_earth * projected_normal,
-                                         index=times).sum(axis=1))))
+    surface_tilt = (90 - xr.ufuncs.rad2deg(xr.ufuncs.arccos((panel_norm_earth * projected_normal).sum(dim="xyz",skipna=True))))
 
     # Bundle DataFrame for return values and filter for sun below horizon.
-    df_out = pd.DataFrame({'tracker_theta': tracker_theta, 'aoi': aoi,
-                           'surface_azimuth': surface_azimuth,
-                           'surface_tilt': surface_tilt},
+    if times is not None:
+        df_out = pd.DataFrame({'tracker_theta': tracker_theta.to_series(), 'aoi': aoi.to_series(),
+                           'surface_azimuth': surface_azimuth.to_series(),
+                           'surface_tilt': surface_tilt.to_series()},
                           index=times)
 
-    df_out[apparent_zenith > 90] = np.nan
+        df_out[apparent_zenith.values > 90] = np.nan
+    else:
+        df_out = xr.Dataset({'tracker_theta': tracker_theta, 'aoi': aoi,
+                           'surface_azimuth': surface_azimuth,
+                           'surface_tilt': surface_tilt})
+
+        zenith_mask = apparent_zenith.values > 90
+        df_out = df_out*(1/~zenith_mask)
 
     return df_out

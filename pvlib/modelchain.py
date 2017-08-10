@@ -52,8 +52,9 @@ def basic_chain(times, latitude, longitude,
     inverter_parameters : None, dict or Series
         Inverter parameters as defined by the CEC.
 
-    irradiance : None or DataFrame, default None
+    irradiance : None, DataFrame, Series, xarray.DataArray or xarray.Dataset, default None
         If None, calculates clear sky data.
+        If xarray.DataArray or Series, it is assumed to be ghi.
         Columns must be 'dni', 'ghi', 'dhi'.
 
     weather : None or DataFrame, default None
@@ -162,6 +163,12 @@ def basic_chain(times, latitude, longitude,
             altitude=altitude,
             dni_extra=dni_extra
             )
+    elif isinstance(irradiance, xr.DataArray):
+        ghi = xr.Dataset({"ghi":irradiance})
+        irradiance = complete_irradiance(ghi,solar_position=solar_position,dni_extra=dni_extra)
+    elif isinstance(irradiance, pd.Series):
+        ghi = pd.DataFrame({"ghi":irradiance})
+        irradiance = complete_irradiance(ghi,solar_position=solar_position,dni_extra=dni_extra)
 
     total_irrad = pvlib.irradiance.total_irrad(
         surface_tilt,
@@ -191,6 +198,76 @@ def basic_chain(times, latitude, longitude,
     ac = pvsystem.snlinverter(dc['v_mp'], dc['p_mp'], inverter_parameters)
 
     return dc, ac
+
+
+def complete_irradiance(weather, solar_position, clearsky_dni=None, dni_extra=None):
+    """
+    Determine the missing irradiation columns. Only two of the
+    following data columns (dni, ghi, dhi) are needed to calculate
+    the missing data. Alternatively, with only ghi it uses the Erbs model
+    to calculate the other two data columns.
+
+    This function is not safe at the moment. Results can be too high
+    or negative. Please contribute and help to improve this function
+    on https://github.com/pvlib/pvlib-python
+
+    Parameters
+    ----------
+    weather : pandas.DataFrame or xarray.Dataset
+        Table with at least two columns containing one of the
+        following data sets: dni, dhi, ghi. Or just the single column ghi.
+
+    solar_position: pandas.DataFrame or xarray.Dataset
+        Table with the column zenith.
+
+    clearsky_dni: None, pandas.DataFrame or xarray.Dataset, default None
+        Only used for calculating dni from dhi and ghi. Not neccesary.
+
+    dni_extra: None, pandas.DataFrame or xarray.Dataset, default None
+        Only used for calculating dni and dhi from just ghi. Not needed, but
+        recommended. See basic_chain for how to calculate from times.
+
+    Returns
+    -------
+    weather
+    """
+
+    if isinstance(weather, xr.Dataset):
+        icolumns = set(weather.data_vars.keys())
+    else:
+        icolumns = set(weather.columns)
+    wrn_txt = ("This function is not safe at the moment.\n" +
+               "Results can be too high or negative.\n" +
+               "Help to improve this function on github:\n" +
+               "https://github.com/pvlib/pvlib-python \n")
+
+    if {'ghi', 'dhi'} <= icolumns and 'dni' not in icolumns:
+        logging.debug('Estimate dni from ghi and dhi')
+        weather['dni'] = pvlib.irradiance.dni(
+            weather.ghi, weather.dhi,
+            solar_position.zenith,
+            clearsky_dni=clearsky_dni,
+            clearsky_tolerance=1.1)
+    elif {'dni', 'dhi'} <= icolumns and 'ghi' not in icolumns:
+        warnings.warn(wrn_txt, UserWarning)
+        logging.debug('Estimate ghi from dni and dhi')
+        weather['ghi'] = (
+            weather.dni * tools.cosd(solar_position.zenith) +
+            weather.dhi)
+    elif {'dni', 'ghi'} <= icolumns and 'dhi' not in icolumns:
+        warnings.warn(wrn_txt, UserWarning)
+        logging.debug('Estimate dhi from dni and ghi')
+        weather['dhi'] = (
+            weather.ghi - weather.dni *
+            tools.cosd(solar_position.zenith))
+    elif {'ghi'} <= icolumns and 'dhi' not in icolumns and 'dni' not in icolumns:
+        warnings.warn(wrn_txt, UserWarning)
+        logging.debug('Estimate dni and dhi from ghi')
+        erbs_irrad = pvlib.irradiance.erbs(weather.ghi, solar_position.zenith, dni_extra=dni_extra)
+        weather['dni'] = erbs_irrad.dni
+        weather['dhi'] = erbs_irrad.dhi
+
+    return weather
 
 
 def get_orientation(strategy, **kwargs):
@@ -684,31 +761,8 @@ class ModelChain(object):
         if times is not None:
             self.times = times
         self.solar_position = self.location.get_solarposition(self.times)
-        icolumns = set(self.weather.columns)
-        wrn_txt = ("This function is not safe at the moment.\n" +
-                   "Results can be too high or negative.\n" +
-                   "Help to improve this function on github:\n" +
-                   "https://github.com/pvlib/pvlib-python \n")
 
-        if {'ghi', 'dhi'} <= icolumns and 'dni' not in icolumns:
-            logging.debug('Estimate dni from ghi and dhi')
-            self.weather.loc[:, 'dni'] = pvlib.irradiance.dni(
-                self.weather.loc[:, 'ghi'], self.weather.loc[:, 'dhi'],
-                self.solar_position.zenith,
-                clearsky_dni=self.location.get_clearsky(times).dni,
-                clearsky_tolerance=1.1)
-        elif {'dni', 'dhi'} <= icolumns and 'ghi' not in icolumns:
-            warnings.warn(wrn_txt, UserWarning)
-            logging.debug('Estimate ghi from dni and dhi')
-            self.weather.loc[:, 'ghi'] = (
-                self.weather.dni * tools.cosd(self.solar_position.zenith) +
-                self.weather.dhi)
-        elif {'dni', 'ghi'} <= icolumns and 'dhi' not in icolumns:
-            warnings.warn(wrn_txt, UserWarning)
-            logging.debug('Estimate dhi from dni and ghi')
-            self.weather.loc[:, 'dhi'] = (
-                self.weather.ghi - self.weather.dni *
-                tools.cosd(self.solar_position.zenith))
+        self.weather = complete_irradiance(self.weather,self.solar_position,clearsky_dni=self.location.get_clearsky(times).dni)
 
         return self
 

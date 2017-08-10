@@ -1408,7 +1408,7 @@ def dirindex(ghi, ghi_clearsky, dni_clearsky, zenith, times, pressure=101325.,
     return dni_dirindex
 
 
-def erbs(ghi, zenith, doy):
+def erbs(ghi, zenith, doy=None, dni_extra=1367.0):
     r"""
     Estimate DNI and DHI from GHI using the Erbs model.
 
@@ -1461,7 +1461,8 @@ def erbs(ghi, zenith, doy):
     disc
     """
 
-    dni_extra = extraradiation(doy)
+    if doy is not None:
+        dni_extra = extraradiation(doy)
 
     # This Z needs to be the true Zenith angle, not apparent,
     # to get extraterrestrial horizontal radiation)
@@ -1493,6 +1494,8 @@ def erbs(ghi, zenith, doy):
 
     if isinstance(dni, pd.Series):
         data = pd.DataFrame(data)
+    elif isinstance(dni, xr.DataArray):
+        data = xr.Dataset(data)
 
     return data
 
@@ -1552,6 +1555,8 @@ def liujordan(zenith, transmittance, airmass, pressure=101325.,
 
     if isinstance(ghi, pd.Series):
         irrads = pd.DataFrame(irrads)
+    if isinstance(ghi, xr.DataArray):
+        irrads = xr.Dataset(irrads)
 
     return irrads
 

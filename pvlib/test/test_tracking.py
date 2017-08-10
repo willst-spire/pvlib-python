@@ -3,6 +3,7 @@ import datetime
 import numpy as np
 from numpy import nan
 import pandas as pd
+import xarray as xr
 
 import pytest
 from pandas.util.testing import assert_frame_equal
@@ -25,6 +26,24 @@ def test_solar_noon():
                            index=[0], dtype=np.float64)
 
     assert_frame_equal(expect, tracker_data)
+
+def test_solar_xarray():
+    apparent_zenith = xr.DataArray([[10,10],[60,60]],dims=["time","site"])
+    apparent_azimuth = xr.DataArray([[180,180],[90,90]],dims=["time","site"])
+    tracker_data = tracking.singleaxis(apparent_zenith, apparent_azimuth,
+                                       axis_tilt=0, axis_azimuth=0,
+                                       max_angle=90, backtrack=True,
+                                       gcr=2.0/7.0)
+
+    expect_one = xr.Dataset.from_dataframe(pd.DataFrame({'aoi': 10, 'surface_azimuth': 90,
+                           'surface_tilt': 0, 'tracker_theta': 0},
+                           index=[0], dtype=np.float64)).squeeze("index").drop("index")
+    expect_two = xr.Dataset.from_dataframe(pd.DataFrame({'aoi': 0, 'surface_azimuth': 90,
+                           'surface_tilt': 60, 'tracker_theta': 60},
+                           index=[0], dtype=np.float64)).squeeze("index").drop("index")
+
+    xr.testing.assert_allclose(expect_one, tracker_data.isel(time=0,site=0))
+    xr.testing.assert_allclose(expect_two, tracker_data.isel(time=1,site=1))
 
 
 def test_azimuth_north_south():
