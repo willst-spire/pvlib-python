@@ -368,7 +368,7 @@ def test_basic_chain_ghi(sam_data):
     latitude = 32.2
     longitude = -111
     altitude = 700
-    irradiance = pd.Series([607.1,0], index=times)
+    irradiance = pd.DataFrame({"ghi":pd.Series([607.1,0], index=times)})
     surface_tilt = 0
     surface_azimuth = 0
     modules = sam_data['sandiamod']
@@ -421,7 +421,7 @@ def test_basic_chain_ghi_xarray(sam_data):
     latitude = xr.DataArray([32.2], dims=["x"])
     longitude = xr.DataArray([-111], dims=["x"])
     altitude = 700
-    irradiance = xr.DataArray([[607.1,0]], dims=["x","time"],coords={"time":time_array})
+    irradiance = xr.Dataset({"ghi":xr.DataArray([[607.1,0]], dims=["x","time"],coords={"time":time_array})})
     surface_tilt = 0
     surface_azimuth = 0
     modules = sam_data['sandiamod']

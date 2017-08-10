@@ -52,10 +52,10 @@ def basic_chain(times, latitude, longitude,
     inverter_parameters : None, dict or Series
         Inverter parameters as defined by the CEC.
 
-    irradiance : None, DataFrame, Series, xarray.DataArray or xarray.Dataset, default None
+    irradiance : None, DataFrame, or xarray.Dataset, default None
         If None, calculates clear sky data.
-        If xarray.DataArray or Series, it is assumed to be ghi.
-        Columns must be 'dni', 'ghi', 'dhi'.
+        If xarray.DataArray or Series, will try to fill in missing
+        data from the set:'dni', 'ghi', 'dhi'.
 
     weather : None or DataFrame, default None
         If None, assumes air temperature is 20 C and
@@ -163,12 +163,10 @@ def basic_chain(times, latitude, longitude,
             altitude=altitude,
             dni_extra=dni_extra
             )
-    elif isinstance(irradiance, xr.DataArray):
-        ghi = xr.Dataset({"ghi":irradiance})
-        irradiance = complete_irradiance(ghi,solar_position=solar_position,dni_extra=dni_extra)
-    elif isinstance(irradiance, pd.Series):
-        ghi = pd.DataFrame({"ghi":irradiance})
-        irradiance = complete_irradiance(ghi,solar_position=solar_position,dni_extra=dni_extra)
+    elif isinstance(irradiance, xr.Dataset):
+        irradiance = complete_irradiance(irradiance,solar_position=solar_position,dni_extra=dni_extra)
+    elif isinstance(irradiance, pd.DataFrame):
+        irradiance = complete_irradiance(irradiance,solar_position=solar_position,dni_extra=dni_extra)
 
     total_irrad = pvlib.irradiance.total_irrad(
         surface_tilt,
