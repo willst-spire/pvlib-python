@@ -464,6 +464,28 @@ def test_basic_chain_strategy(sam_data):
 
 
 @requires_scipy
+def test_basic_chain_tracking(sam_data):
+    times = pd.DatetimeIndex(start='20160101 1200-0700',
+                             end='20160101 1800-0700', freq='6H').tz_convert(None)
+    latitude = 32.2
+    longitude = -111
+    altitude = 700
+    modules = sam_data['sandiamod']
+    module_parameters = modules['Canadian_Solar_CS5P_220M___2009_']
+    inverters = sam_data['cecinverter']
+    inverter_parameters = inverters['ABB__MICRO_0_25_I_OUTD_US_208_208V__CEC_2014_']
+
+    dc, ac = modelchain.basic_chain(times, latitude, longitude,
+                                    module_parameters, inverter_parameters,
+                                    orientation_strategy='single_axis_tracking',
+                                    altitude=altitude)
+
+    expected = pd.Series(np.array([  119.067713606, np.nan]),
+                         index=times)
+    assert_series_equal(ac, expected, check_less_precise=2)
+
+
+@requires_scipy
 def test_basic_chain_altitude_pressure(sam_data):
     times = pd.DatetimeIndex(start='20160101 1200-0700',
                              end='20160101 1800-0700', freq='6H')

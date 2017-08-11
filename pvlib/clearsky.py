@@ -14,6 +14,7 @@ import pandas as pd
 import xarray as xr
 
 from pvlib import tools, atmosphere, solarposition, irradiance
+from pvlib.tools import recursive_call_multi_locations
 
 
 def ineichen(apparent_zenith, airmass_absolute, linke_turbidity,
@@ -203,33 +204,15 @@ def lookup_linke_turbidity(time, latitude, longitude, filepath=None,
                           'You can still use clearsky.ineichen if you ' +
                           'supply your own turbidities.')
 
-    if isinstance(time, xr.DataArray):
-        time = time.coords.to_index() if time.coords else pd.DatetimeIndex(time.values, name=time.dims[0])
+    if filepath is None:
+        pvlib_path = os.path.dirname(os.path.abspath(__file__))
+        filepath = os.path.join(pvlib_path, 'data', 'LinkeTurbidities.mat')
 
     # Recursive call to lookup_linke_turbidity if latitude and longitude are xarrays
     if isinstance(latitude, xr.DataArray) and isinstance(longitude, xr.DataArray):
 
-        try:
-            if max(latitude.ndim, longitude.ndim) != 1:
-                raise ValueError("Latitude or Longitude have multiple dimensions.")
-            xr.testing.assert_equal(latitude.coords.to_dataset(), longitude.coords.to_dataset())
-            spatial_dim = latitude.coords.to_index()
-        except AssertionError as ae:
-            raise ValueError("Latitude and Longitude do not have equal coordinates in.")
-
-        time_dim = time.name if time.name else "index"
-        def lookup_turbidity_single(lat, lon):
-            single_tb_da = xr.DataArray.from_series(
-                lookup_linke_turbidity(time, lat.values.item(), lon.values.item(), filepath, interp_turbidity))
-            single_tb_da[time_dim] = np.array(time, dtype=np.datetime64)
-            return single_tb_da
-
-        turbidity = xr.concat([lookup_turbidity_single(lat, lon) for lat, lon in zip(latitude, longitude)], dim=spatial_dim)
-        return turbidity
-
-    if filepath is None:
-        pvlib_path = os.path.dirname(os.path.abspath(__file__))
-        filepath = os.path.join(pvlib_path, 'data', 'LinkeTurbidities.mat')
+        return recursive_call_multi_locations(time,latitude,longitude,lookup_linke_turbidity,
+                                              filepath=filepath, interp_turbidity=interp_turbidity)
 
     mat = scipy.io.loadmat(filepath)
     linke_turbidity_table = mat['LinkeTurbidity']

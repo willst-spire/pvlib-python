@@ -23,7 +23,7 @@ import pandas as pd
 import xarray as xr
 
 from pvlib import atmosphere
-from pvlib.tools import datetime_to_djd, djd_to_datetime
+from pvlib.tools import datetime_to_djd, djd_to_datetime, xr_to_dt_index, recursive_call_multi_locations
 
 import logging
 pvl_logger = logging.getLogger('pvlib')
@@ -83,29 +83,9 @@ def get_solarposition(time, latitude, longitude,
     """
 
     if isinstance(time, xr.DataArray):
-        time = time.coords.to_index() if time.coords else pd.DatetimeIndex(time.values, name=time.dims[0])
-
-    # Recursive call to get_solarposition if latitude and longitude are xarrays
-    if isinstance(latitude, xr.DataArray) and isinstance(longitude, xr.DataArray):
-
-        try:
-            if max(latitude.ndim, longitude.ndim) != 1:
-                raise ValueError("Latitude or Longitude have multiple dimensions.")
-            xr.testing.assert_equal(latitude.coords.to_dataset(), longitude.coords.to_dataset())
-            spatial_dim = latitude.coords.to_index()
-        except AssertionError as ae:
-            raise ValueError("Latitude and Longitude do not have equal coordinates in.")
-
-        time_dim = time.name if time.name else "index"
-        def get_solar_position_single(lat, lon):
-            single_sp_da = xr.Dataset.from_dataframe(
-                get_solarposition(time, lat.values.item(), lon.values.item(), altitude, pressure, method,
-                                                temperature, **kwargs)).to_array(dim="columns")
-            single_sp_da[time_dim] = np.array(time, dtype=np.datetime64)
-            return single_sp_da
-
-        solar_positions = xr.concat([get_solar_position_single(lat, lon) for lat, lon in zip(latitude, longitude)], dim=spatial_dim)
-        return solar_positions.to_dataset(dim="columns")
+        time = xr_to_dt_index(time)
+    elif isinstance(time, dt.datetime):
+        time = pd.DatetimeIndex([time, ])
 
     if altitude is None and pressure is None:
         altitude = 0.
@@ -115,9 +95,14 @@ def get_solarposition(time, latitude, longitude,
     elif pressure is None:
         pressure = atmosphere.alt2pres(altitude)
 
+    # Recursive call to get_solarposition if latitude and longitude are xarrays
+    if isinstance(latitude, xr.DataArray) and isinstance(longitude, xr.DataArray):
+
+        return recursive_call_multi_locations(time,latitude,longitude,get_solarposition,
+                                              altitude=altitude, pressure=pressure,
+                                              method=method,temperature=temperature, **kwargs)
+
     method = method.lower()
-    if isinstance(time, dt.datetime):
-        time = pd.DatetimeIndex([time, ])
 
     if method == 'nrel_c':
         ephem_df = spa_c(time, latitude, longitude, pressure, temperature,

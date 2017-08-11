@@ -92,6 +92,10 @@ def extraradiation(datetime_or_doy, solar_constant=1366.1, method='spencer',
     # complicated because there are many day-of-year-like input types,
     # and the different algorithms need different types. Maybe you have
     # a better way to do it.
+    if isinstance(datetime_or_doy,xr.DataArray):
+        datetime_or_doy = datetime_or_doy.astype("datetime64[ns]")
+        datetime_or_doy = np.vectorize(tools._datetimelike_scalar_to_doy)(datetime_or_doy)
+
     if isinstance(datetime_or_doy, pd.DatetimeIndex):
         to_doy = tools._pandas_to_doy  # won't be evaluated unless necessary
         to_datetimeindex = lambda x: datetime_or_doy
@@ -139,6 +143,9 @@ def extraradiation(datetime_or_doy, solar_constant=1366.1, method='spencer',
     Ea = solar_constant * RoverR0sqrd
 
     Ea = to_output(Ea)
+
+    if isinstance(datetime_or_doy,pd.DatetimeIndex):
+        Ea = pd.Series(Ea,index=datetime_or_doy)
 
     return Ea
 

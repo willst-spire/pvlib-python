@@ -213,6 +213,57 @@ def _bool_false_is_nan(cond, true_values=1):
     return (0 / cond) + true_values
 
 
+def dt_index_to_xr(time):
+    return np.array(time, dtype=np.datetime64)
+
+
+def xr_to_dt_index(time):
+    time = time.astype("datetime64[ns]")
+    return time.coords.to_index() if time.coords else pd.DatetimeIndex(time.values, name=time.dims[0])
+
+
+def recursive_call_multi_locations(time, latitude, longitude, func, **kwargs):
+    # Recursive call to func if latitude and longitude are xarrays
+    if isinstance(latitude, xr.DataArray) and isinstance(longitude, xr.DataArray):
+
+        try:
+            if max(latitude.ndim, longitude.ndim) != 1:
+                raise ValueError("Latitude or Longitude have multiple dimensions.")
+            xr.testing.assert_equal(latitude.coords.to_dataset(), longitude.coords.to_dataset())
+            spatial_dim = latitude.coords.to_index()
+        except AssertionError as ae:
+            raise ValueError("Latitude and Longitude do not have equal coordinates in.")
+
+        if isinstance(time,pd.DatetimeIndex):
+            time_dim = time.name if time.name else "index"
+            time_index = time
+            time_array = dt_index_to_xr(time)
+        elif isinstance(time,xr.DataArray):
+            time_array = time
+            time_index = xr_to_dt_index(time)
+            time_dim = time_index.name if time_index.name else "index"
+        else:
+            raise ValueError("time must be either DateTimeIndex or a xarray.DataArray")
+
+        def recursive_func(lat, lon):
+            single = func(time_index, lat, lon, **kwargs)
+            if isinstance(single,pd.Series):
+                single = pd.DataFrame(single)
+            single_ds = xr.Dataset.from_dataframe(single).to_array(dim="columns")
+            single_ds[time_dim] = time_array
+            return single_ds
+
+        output = xr.concat([recursive_func(lat.values.item(), lon.values.item()) for lat, lon in zip(latitude, longitude)], dim=spatial_dim)
+
+        if output.sizes["columns"] == 1:
+            return output.squeeze("columns",drop=True)
+        else:
+            return output.to_dataset(dim="columns")
+
+    else:
+        raise ValueError("Recursive calls can only be made on xarray.DataArray inputs for latitude and longitude.")
+
+
 def _scalar_out(input):
     if np.isscalar(input):
         output = input

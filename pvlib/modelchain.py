@@ -77,7 +77,8 @@ def basic_chain(times, latitude, longitude,
         The strategy for aligning the modules.
         If not None, sets the ``surface_azimuth`` and ``surface_tilt``
         properties of the ``system``. Allowed strategies include 'flat',
-        'south_at_latitude_tilt'. Ignored for SingleAxisTracker systems.
+        'south_at_latitude_tilt'. For experimental support of
+        SingleAxisTracker systems, use ``single_axis_tracking`.`
 
     transposition_model : str, default 'haydavies'
         Passed to system.get_irradiance.
@@ -107,19 +108,6 @@ def basic_chain(times, latitude, longitude,
         power (Series).
     """
 
-    # use surface_tilt and surface_azimuth if provided,
-    # otherwise set them using the orientation_strategy
-    if surface_tilt is not None and surface_azimuth is not None:
-        pass
-    elif orientation_strategy is not None:
-        surface_tilt, surface_azimuth = \
-            get_orientation(orientation_strategy, latitude=latitude)
-    else:
-        raise ValueError('orientation_strategy or surface_tilt and '
-                         'surface_azimuth must be provided')
-
-    times = times
-
     if altitude is None and pressure is None:
         altitude = 0.
         pressure = 101325.
@@ -135,6 +123,19 @@ def basic_chain(times, latitude, longitude,
                                                      method=solar_position_method,
                                                      **kwargs)
 
+    # use surface_tilt and surface_azimuth if provided,
+    # otherwise set them using the orientation_strategy
+    #TODO Remove exposure SingleAxisTracker to modelchain context. Refactor get_orientation.
+    if surface_tilt is not None and surface_azimuth is not None:
+        pass
+    elif orientation_strategy is not None:
+        tracker = SingleAxisTracker(module_parameters=module_parameters, inverter_parameters=inverter_parameters)
+        surface_tilt, surface_azimuth = \
+            get_orientation(orientation_strategy, tracker=tracker, latitude=latitude, solar_position=solar_position)
+    else:
+        raise ValueError('orientation_strategy or surface_tilt and '
+                         'surface_azimuth must be provided')
+
     # possible error with using apparent zenith with some models
     airmass = atmosphere.relativeairmass(solar_position['apparent_zenith'],
                                          model=airmass_model)
@@ -144,18 +145,11 @@ def basic_chain(times, latitude, longitude,
                                solar_position['apparent_zenith'],
                                solar_position['azimuth'])
 
-    if isinstance(solar_position,xr.Dataset):
-        solar_position_index = times.astype("datetime64[ns]")
-        doy_index = np.vectorize(tools._datetimelike_scalar_to_doy)(solar_position_index)
-        dni_extra = pvlib.irradiance.extraradiation(doy_index)
-    else:
-        solar_position_index = solar_position.index
-        dni_extra = pvlib.irradiance.extraradiation(solar_position_index)
-        dni_extra = pd.Series(dni_extra, index=solar_position_index)
+    dni_extra = pvlib.irradiance.extraradiation(times)
 
     if irradiance is None:
         linke_turbidity = clearsky.lookup_linke_turbidity(
-            solar_position_index, latitude, longitude)
+            times, latitude, longitude)
         irradiance = clearsky.ineichen(
             solar_position['apparent_zenith'],
             airmass,
@@ -268,7 +262,7 @@ def complete_irradiance(weather, solar_position, clearsky_dni=None, dni_extra=No
     return weather
 
 
-def get_orientation(strategy, **kwargs):
+def get_orientation(strategy, tracker=None, **kwargs):
     """
     Determine a PV system's surface tilt and surface azimuth
     using a named strategy.
@@ -278,6 +272,8 @@ def get_orientation(strategy, **kwargs):
     strategy: str
         The orientation strategy.
         Allowed strategies include 'flat', 'south_at_latitude_tilt'.
+        If solar-position is provided as kwarg then 'single_axis_tracking'
+        is supported.
     **kwargs:
         Strategy-dependent keyword arguments. See code for details.
 
@@ -292,9 +288,14 @@ def get_orientation(strategy, **kwargs):
     elif strategy == 'flat':
         surface_azimuth = 180
         surface_tilt = 0
+    elif strategy == 'single_axis_tracking' and "solar_position" in kwargs.keys() and tracker is not None:
+        solar_position = kwargs['solar_position']
+        tracking_data = tracker.singleaxis(apparent_zenith=solar_position.apparent_zenith, apparent_azimuth=solar_position.azimuth)
+        surface_azimuth = tracking_data.surface_azimuth
+        surface_tilt = tracking_data.surface_tilt
     else:
         raise ValueError('invalid orientation strategy. strategy must '
-                         'be one of south_at_latitude, flat,')
+                         'be one of south_at_latitude, flat, or single_axis_tracking')
 
     return surface_tilt, surface_azimuth
 
