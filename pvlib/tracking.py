@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from pvlib.tools import cosd, sind
+from pvlib.tools import cosd, sind, _bool_false_is_nan
 from pvlib.pvsystem import PVSystem
 from pvlib.location import Location
 from pvlib import irradiance, atmosphere
@@ -420,7 +420,7 @@ def singleaxis(apparent_zenith, apparent_azimuth,
     wid = 90 - xr.ufuncs.rad2deg(xr.ufuncs.arctan2(zp, xp))
 
     # filter for sun above panel horizon
-    wid = wid * (1 / ~(zp <= 0))
+    wid = _bool_false_is_nan(zp > 0, wid)
 
     # Account for backtracking; modified from [1] to account for rotation
     # angle convention being used here.

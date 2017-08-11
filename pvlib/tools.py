@@ -209,6 +209,10 @@ def _datetimelike_scalar_to_datetimeindex(time):
     return pd.DatetimeIndex([pd.Timestamp(time)])
 
 
+def _bool_false_is_nan(cond, true_values=1):
+    return (0 / cond) + true_values
+
+
 def _scalar_out(input):
     if np.isscalar(input):
         output = input
